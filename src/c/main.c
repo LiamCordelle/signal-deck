@@ -194,9 +194,9 @@ static GColor color_battery(void) {
     return PBL_IF_COLOR_ELSE(GColorFromHEX(0xff0000), GColorBlack);
   }
   if (s_battery_percent < 40) {
-    return PBL_IF_COLOR_ELSE(GColorFromHEX(0xff5500), GColorBlack);
+    return PBL_IF_COLOR_ELSE(GColorFromHEX(0xffaa00), GColorBlack);
   }
-  return PBL_IF_COLOR_ELSE(GColorFromHEX(0x00b96d), GColorBlack);
+  return PBL_IF_COLOR_ELSE(GColorFromHEX(0x00aa55), GColorBlack);
 }
 
 static void default_settings(void) {
