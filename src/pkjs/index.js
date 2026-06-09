@@ -1,4 +1,9 @@
+var Clay = require('@rebble/clay');
+var clayConfig = require('./config');
+var clay = new Clay(clayConfig, null, { autoHandleEvents: false });
+
 var STORAGE_KEY = 'signalDeckSettings';
+var CLAY_STORAGE_KEY = 'clay-settings';
 
 var DEFAULT_SETTINGS = {
   darkMode: false,
@@ -29,19 +34,8 @@ var WORLD_OPTIONS = {
   syd: { label: 'SYD', offset: 600, dst: 4 }
 };
 
-var FOOTER_OPTIONS = [
-  ['UV index', 0],
-  ['Sun event', 1],
-  ['World clock', 2],
-  ['Battery', 3],
-  ['Weather', 4],
-  ['Temperature', 5],
-  ['Rain chance', 6],
-  ['Steps', 7],
-  ['Heart rate', 8]
-];
-
 var settings = loadSettings();
+syncClaySettings();
 
 var xhrRequest = function(url, type, callback, errorCallback) {
   var xhr = new XMLHttpRequest();
@@ -116,17 +110,79 @@ function numberInRange(value, min, max, fallback) {
 }
 
 function normalizeColor(value, fallback) {
-  if (typeof value !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(value)) {
-    return fallback;
+  var text;
+  if (typeof value === 'number' && isFinite(value) && value >= 0 && value <= 0xffffff) {
+    text = value.toString(16);
+    while (text.length < 6) {
+      text = '0' + text;
+    }
+    return '#' + text.toLowerCase();
   }
-  return value.toLowerCase();
+  if (typeof value === 'string') {
+    text = value.replace(/^#|^0x/, '');
+    if (/^[0-9a-fA-F]{6}$/.test(text)) {
+      return '#' + text.toLowerCase();
+    }
+  }
+  return fallback;
 }
 
 function colorToInt(value) {
   return parseInt(value.replace('#', ''), 16);
 }
 
+function flattenClaySettings(raw) {
+  var output = {};
+  var key;
+  var item;
+  for (key in raw) {
+    if (raw.hasOwnProperty(key)) {
+      item = raw[key];
+      output[key] = item && typeof item === 'object' &&
+          item.hasOwnProperty('value') ? item.value : item;
+    }
+  }
+  return output;
+}
+
+function claySettingsFromSettings(value) {
+  return {
+    darkMode: value.darkMode,
+    timeMode: value.timeMode,
+    tempUnit: value.tempUnit,
+    stepGoal: value.stepGoal,
+    userAge: value.userAge,
+    world: value.world,
+    hrColor: value.hrColor,
+    stepsColor: value.stepsColor,
+    rainColor: value.rainColor,
+    footerLeft: value.footerLeft,
+    footerCenter: value.footerCenter,
+    footerRight: value.footerRight,
+    demoFallback: value.demoFallback,
+    showWeather: value.showWeather,
+    showHealth: value.showHealth,
+    showBatteryPercent: value.showBatteryPercent
+  };
+}
+
+function syncClaySettings() {
+  try {
+    clay.setSettings(claySettingsFromSettings(settings));
+  } catch (e) {
+    console.log('Clay settings sync failed: ' + e);
+  }
+}
+
 function loadSettings() {
+  try {
+    var clayRaw = localStorage.getItem(CLAY_STORAGE_KEY);
+    if (clayRaw) {
+      return copyDefaults(flattenClaySettings(JSON.parse(clayRaw)));
+    }
+  } catch (e) {
+    console.log('Clay settings load failed: ' + e);
+  }
   try {
     var raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
@@ -144,6 +200,7 @@ function saveSettings() {
   } catch (e) {
     console.log('Settings save failed: ' + e);
   }
+  syncClaySettings();
 }
 
 function settingsDictionary() {
@@ -282,95 +339,14 @@ function getWeather() {
   );
 }
 
-function selected(value, current) {
-  return parseInt(value, 10) === parseInt(current, 10) ? ' selected' : '';
-}
-
-function checked(value) {
-  return value ? ' checked' : '';
-}
-
-function footerOptions(current) {
-  var html = '';
-  for (var i = 0; i < FOOTER_OPTIONS.length; i++) {
-    html += '<option value="' + FOOTER_OPTIONS[i][1] + '"' +
-        selected(FOOTER_OPTIONS[i][1], current) + '>' + FOOTER_OPTIONS[i][0] +
-        '</option>';
-  }
-  return html;
-}
-
-function worldOptions(current) {
-  var labels = [
-    ['nz', 'New Zealand'],
-    ['utc', 'UTC'],
-    ['lon', 'London'],
-    ['nyc', 'New York'],
-    ['la', 'Los Angeles'],
-    ['tky', 'Tokyo'],
-    ['syd', 'Sydney']
-  ];
-  var html = '';
-  for (var i = 0; i < labels.length; i++) {
-    html += '<option value="' + labels[i][0] + '"' +
-        (labels[i][0] === current ? ' selected' : '') + '>' + labels[i][1] +
-        '</option>';
-  }
-  return html;
-}
-
-function configPageHtml() {
-  return '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">' +
-    '<style>body{font-family:-apple-system,BlinkMacSystemFont,Helvetica,Arial,sans-serif;margin:0;background:#f8f0dc;color:#081827}' +
-    'main{padding:16px}h1{font-size:20px;margin:0 0 12px}.section{border-top:1px solid #c8c1af;padding:14px 0}' +
-    'label{display:block;font-size:13px;font-weight:700;margin:12px 0 4px}select,input{box-sizing:border-box;width:100%;font-size:16px;padding:8px;border:1px solid #7d877d;border-radius:4px;background:#fff}' +
-    'input[type=checkbox]{width:auto;margin-right:8px}.check{display:flex;align-items:center;margin:10px 0;font-weight:700}' +
-    '.row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}.row label{margin-top:0}' +
-    'button{width:100%;padding:12px;background:#081827;color:white;border:0;border-radius:4px;font-size:16px;font-weight:800}</style></head>' +
-    '<body><main><h1>Signal Deck</h1>' +
-    '<div class="section">' +
-    '<label class="check"><input id="darkMode" type="checkbox"' + checked(settings.darkMode) + '>Dark mode</label>' +
-    '<label>Time format</label><select id="timeMode">' +
-    '<option value="0"' + selected(0, settings.timeMode) + '>System</option>' +
-    '<option value="1"' + selected(1, settings.timeMode) + '>12-hour</option>' +
-    '<option value="2"' + selected(2, settings.timeMode) + '>24-hour</option></select>' +
-    '<label>Temperature</label><select id="tempUnit">' +
-    '<option value="0"' + selected(0, settings.tempUnit) + '>Celsius</option>' +
-    '<option value="1"' + selected(1, settings.tempUnit) + '>Fahrenheit</option></select>' +
-    '</div><div class="section">' +
-    '<label>Step goal</label><input id="stepGoal" type="number" min="1000" max="50000" step="500" value="' + settings.stepGoal + '">' +
-    '<label>User age</label><input id="userAge" type="number" min="10" max="100" value="' + settings.userAge + '">' +
-    '<label>World clock</label><select id="world">' + worldOptions(settings.world) + '</select>' +
-    '</div><div class="section">' +
-    '<label>Heart accent</label><input id="hrColor" type="color" value="' + settings.hrColor + '">' +
-    '<label>Steps accent</label><input id="stepsColor" type="color" value="' + settings.stepsColor + '">' +
-    '<label>Rain accent</label><input id="rainColor" type="color" value="' + settings.rainColor + '">' +
-    '</div><div class="section"><div class="row">' +
-    '<label>Left<select id="footerLeft">' + footerOptions(settings.footerLeft) + '</select></label>' +
-    '<label>Center<select id="footerCenter">' + footerOptions(settings.footerCenter) + '</select></label>' +
-    '<label>Right<select id="footerRight">' + footerOptions(settings.footerRight) + '</select></label>' +
-    '</div></div><div class="section">' +
-    '<label class="check"><input id="demoFallback" type="checkbox"' + checked(settings.demoFallback) + '>Use demo values when sensors are empty</label>' +
-    '<label class="check"><input id="showWeather" type="checkbox"' + checked(settings.showWeather) + '>Show weather</label>' +
-    '<label class="check"><input id="showHealth" type="checkbox"' + checked(settings.showHealth) + '>Show health gauges</label>' +
-    '<label class="check"><input id="showBatteryPercent" type="checkbox"' + checked(settings.showBatteryPercent) + '>Show battery percentage</label>' +
-    '</div><button onclick="save()">Save</button></main>' +
-    '<script>function q(n,d){var p=location.search.substring(1).split("&");for(var i=0;i<p.length;i++){var kv=p[i].split("=");if(decodeURIComponent(kv[0]||"")===n){return decodeURIComponent(kv.slice(1).join("=")||"")}}return d}' +
-    'function v(id){return document.getElementById(id).value}function c(id){return document.getElementById(id).checked}' +
-    'function save(){var s={darkMode:c("darkMode"),timeMode:parseInt(v("timeMode"),10),tempUnit:parseInt(v("tempUnit"),10),' +
-    'stepGoal:parseInt(v("stepGoal"),10),userAge:parseInt(v("userAge"),10),world:v("world"),hrColor:v("hrColor"),stepsColor:v("stepsColor"),rainColor:v("rainColor"),' +
-    'footerLeft:parseInt(v("footerLeft"),10),footerCenter:parseInt(v("footerCenter"),10),footerRight:parseInt(v("footerRight"),10),' +
-    'demoFallback:c("demoFallback"),showWeather:c("showWeather"),showHealth:c("showHealth"),showBatteryPercent:c("showBatteryPercent")};' +
-    'location.href=q("return_to","pebblejs://close#")+encodeURIComponent(JSON.stringify(s));}</script></body></html>';
-}
-
 Pebble.addEventListener('ready', function() {
   sendSettings();
   getWeather();
 });
 
 Pebble.addEventListener('showConfiguration', function() {
-  Pebble.openURL('data:text/html;charset=utf-8,' + encodeURIComponent(configPageHtml()));
+  syncClaySettings();
+  Pebble.openURL(clay.generateUrl());
 });
 
 Pebble.addEventListener('webviewclosed', function(e) {
@@ -378,7 +354,7 @@ Pebble.addEventListener('webviewclosed', function(e) {
     return;
   }
   try {
-    settings = copyDefaults(JSON.parse(decodeURIComponent(e.response)));
+    settings = copyDefaults(flattenClaySettings(clay.getSettings(e.response, false)));
     saveSettings();
     sendSettings();
     getWeather();
