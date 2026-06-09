@@ -1,0 +1,65 @@
+{
+  "name": "signal-deck",
+  "author": "Codex",
+  "version": "1.0.0",
+  "keywords": ["pebble-app"],
+  "private": true,
+  "dependencies": {},
+  "pebble": {
+    "displayName": "Signal Deck",
+    "uuid": "18A35A7E-4267-4552-BA4A-6AD441AA7B3B",
+    "sdkVersion": "3",
+    "enableMultiJS": true,
+    "targetPlatforms": ["emery"],
+    "watchapp": {
+      "watchface": true
+    },
+    "capabilities": ["location", "health"],
+    "messageKeys": [
+      "TEMPERATURE",
+      "WEATHER_CODE",
+      "RAIN_CHANCE",
+      "UV_INDEX",
+      "SUN_EVENT_TIME",
+      "SUN_EVENT_TYPE",
+      "REQUEST_WEATHER",
+      "REQUEST_SETTINGS",
+      "DARK_MODE",
+      "TIME_MODE",
+      "TEMP_UNIT",
+      "STEP_GOAL",
+      "USER_AGE",
+      "WORLD_LABEL",
+      "WORLD_OFFSET_MIN",
+      "WORLD_DST_MODE",
+      "HR_COLOR",
+      "STEPS_COLOR",
+      "RAIN_COLOR",
+      "FOOTER_LEFT",
+      "FOOTER_CENTER",
+      "FOOTER_RIGHT",
+      "DEMO_FALLBACK",
+      "SHOW_WEATHER",
+      "SHOW_HEALTH",
+      "SHOW_BATTERY_PERCENT"
+    ],
+    "resources": {
+      "media": [
+        { "type": "font", "name": "FONT_TIME_44", "file": "fonts/JetBrainsMono-ExtraBold.ttf", "characterRegex": "[0-9: ]" },
+        { "type": "font", "name": "FONT_NUM_22", "file": "fonts/JetBrainsMono-Bold.ttf", "characterRegex": "[0-9CF.+-]" },
+        { "type": "font", "name": "FONT_VAL_15", "file": "fonts/JetBrainsMono-Bold.ttf", "characterRegex": "[0-9.k%C+-]" },
+        { "type": "font", "name": "FONT_PIX_16", "file": "fonts/Silkscreen-Regular.ttf", "characterRegex": "[A-Za-z0-9 :%.+-]" },
+        { "type": "font", "name": "FONT_PIX_8", "file": "fonts/Silkscreen-Bold.ttf", "characterRegex": "[A-Za-z0-9 :%.+-]" },
+        { "type": "raw", "name": "WX_SUN", "file": "icons/wx_sun.pdc" },
+        { "type": "raw", "name": "WX_PARTLY", "file": "icons/wx_partly.pdc" },
+        { "type": "raw", "name": "WX_CLOUDY", "file": "icons/wx_cloudy.pdc" },
+        { "type": "raw", "name": "WX_RAIN", "file": "icons/wx_rain.pdc" },
+        { "type": "raw", "name": "WX_SNOW", "file": "icons/wx_snow.pdc" },
+        { "type": "raw", "name": "WX_STORM", "file": "icons/wx_storm.pdc" },
+        { "type": "raw", "name": "WX_FOG", "file": "icons/wx_fog.pdc" },
+        { "type": "raw", "name": "SUN_RISE", "file": "icons/sun_rise.pdc" },
+        { "type": "raw", "name": "SUN_SET", "file": "icons/sun_set.pdc" }
+      ]
+    }
+  }
+}
