@@ -355,12 +355,13 @@ function configPageHtml() {
     '<label class="check"><input id="showHealth" type="checkbox"' + checked(settings.showHealth) + '>Show health gauges</label>' +
     '<label class="check"><input id="showBatteryPercent" type="checkbox"' + checked(settings.showBatteryPercent) + '>Show battery percentage</label>' +
     '</div><button onclick="save()">Save</button></main>' +
-    '<script>function v(id){return document.getElementById(id).value}function c(id){return document.getElementById(id).checked}' +
+    '<script>function q(n,d){var p=location.search.substring(1).split("&");for(var i=0;i<p.length;i++){var kv=p[i].split("=");if(decodeURIComponent(kv[0]||"")===n){return decodeURIComponent(kv.slice(1).join("=")||"")}}return d}' +
+    'function v(id){return document.getElementById(id).value}function c(id){return document.getElementById(id).checked}' +
     'function save(){var s={darkMode:c("darkMode"),timeMode:parseInt(v("timeMode"),10),tempUnit:parseInt(v("tempUnit"),10),' +
     'stepGoal:parseInt(v("stepGoal"),10),userAge:parseInt(v("userAge"),10),world:v("world"),hrColor:v("hrColor"),stepsColor:v("stepsColor"),rainColor:v("rainColor"),' +
     'footerLeft:parseInt(v("footerLeft"),10),footerCenter:parseInt(v("footerCenter"),10),footerRight:parseInt(v("footerRight"),10),' +
     'demoFallback:c("demoFallback"),showWeather:c("showWeather"),showHealth:c("showHealth"),showBatteryPercent:c("showBatteryPercent")};' +
-    'location.href="pebblejs://close#"+encodeURIComponent(JSON.stringify(s));}</script></body></html>';
+    'location.href=q("return_to","pebblejs://close#")+encodeURIComponent(JSON.stringify(s));}</script></body></html>';
 }
 
 Pebble.addEventListener('ready', function() {

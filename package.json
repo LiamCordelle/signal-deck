@@ -1,7 +1,7 @@
 {
   "name": "signal-deck",
   "author": "Codex",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "keywords": ["pebble-app"],
   "private": true,
   "dependencies": {},
@@ -14,7 +14,7 @@
     "watchapp": {
       "watchface": true
     },
-    "capabilities": ["location", "health"],
+    "capabilities": ["location", "health", "configurable"],
     "messageKeys": [
       "TEMPERATURE",
       "WEATHER_CODE",
