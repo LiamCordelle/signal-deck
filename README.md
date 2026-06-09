@@ -32,6 +32,11 @@ The PBW is generated at `build/signal-deck.pbw`.
 - Pebble Time 2 / Emery
 - 200x228 color e-paper display
 
+## License
+
+Signal Deck's original code and assets are available under the
+[MIT License](LICENSE).
+
 ## Third-Party Licenses
 
 Signal Deck bundles JetBrains Mono and Silkscreen font files. See
