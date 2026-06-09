@@ -1,7 +1,7 @@
 {
   "name": "signal-deck",
   "author": "Codex",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "keywords": [
     "pebble-app"
   ],
@@ -55,12 +55,6 @@
     ],
     "resources": {
       "media": [
-        {
-          "type": "font",
-          "name": "FONT_NUM_22",
-          "file": "fonts/JetBrainsMono-Bold.ttf",
-          "characterRegex": "[0-9CF.+-]"
-        },
         {
           "type": "font",
           "name": "FONT_VAL_15",
