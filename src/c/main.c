@@ -9,6 +9,12 @@
 #define DEFAULT_DEMO_HR 72
 #define RING_RADIUS 28
 #define RING_STROKE 5
+#define TIME_DIGIT_W 25
+#define TIME_DIGIT_H 43
+#define TIME_DIGIT_STROKE 6
+#define TIME_DIGIT_GAP 4
+#define TIME_COLON_W 7
+#define TIME_COLON_GAP 5
 
 typedef enum {
   TimeModeSystem = 0,
@@ -88,7 +94,6 @@ static int s_sun_event_type = 1;
 static int s_battery_percent = 0;
 static int s_temp_c = 18;
 
-static GFont s_font_time;
 static GFont s_font_num;
 static GFont s_font_val;
 static GFont s_font_pix_lg;
@@ -574,10 +579,83 @@ static void draw_sun_event_pdc(GContext *ctx, GPoint origin, int event_type) {
   }
 }
 
+static uint8_t time_digit_mask(char c) {
+  switch (c) {
+    case '0': return 0x3f;
+    case '1': return 0x06;
+    case '2': return 0x5b;
+    case '3': return 0x4f;
+    case '4': return 0x66;
+    case '5': return 0x6d;
+    case '6': return 0x7d;
+    case '7': return 0x07;
+    case '8': return 0x7f;
+    case '9': return 0x6f;
+    default: return 0;
+  }
+}
+
+static void draw_time_segment(GContext *ctx, GRect rect) {
+  graphics_fill_rect(ctx, rect, 1, GCornersAll);
+}
+
+static void draw_time_digit(GContext *ctx, char c, GPoint origin) {
+  uint8_t mask = time_digit_mask(c);
+  int x = origin.x;
+  int y = origin.y;
+  int w = TIME_DIGIT_W;
+  int h = TIME_DIGIT_H;
+  int t = TIME_DIGIT_STROKE;
+  int mid = h / 2;
+  int mid_y = y + mid - (t / 2);
+
+  if (mask & 0x01) {
+    draw_time_segment(ctx, GRect(x + t, y, w - (2 * t), t));
+  }
+  if (mask & 0x02) {
+    draw_time_segment(ctx, GRect(x + w - t, y + t, t, mid - t));
+  }
+  if (mask & 0x04) {
+    draw_time_segment(ctx, GRect(x + w - t, y + mid, t, h - mid - t));
+  }
+  if (mask & 0x08) {
+    draw_time_segment(ctx, GRect(x + t, y + h - t, w - (2 * t), t));
+  }
+  if (mask & 0x10) {
+    draw_time_segment(ctx, GRect(x, y + mid, t, h - mid - t));
+  }
+  if (mask & 0x20) {
+    draw_time_segment(ctx, GRect(x, y + t, t, mid - t));
+  }
+  if (mask & 0x40) {
+    draw_time_segment(ctx, GRect(x + t, mid_y, w - (2 * t), t));
+  }
+}
+
+static int draw_time_digit_run(GContext *ctx, const char *text, int x, int y) {
+  bool drew_digit = false;
+  for (size_t i = 0; text[i] != '\0'; i++) {
+    if (text[i] >= '0' && text[i] <= '9') {
+      draw_time_digit(ctx, text[i], GPoint(x, y));
+      x += TIME_DIGIT_W + TIME_DIGIT_GAP;
+      drew_digit = true;
+    }
+  }
+  return drew_digit ? x - TIME_DIGIT_GAP : x;
+}
+
+static void draw_time_colon(GContext *ctx, int x, int y) {
+  graphics_fill_rect(ctx, GRect(x, y + 15, TIME_COLON_W, TIME_COLON_W),
+                     1, GCornersAll);
+  graphics_fill_rect(ctx, GRect(x, y + 28, TIME_COLON_W, TIME_COLON_W),
+                     1, GCornersAll);
+}
+
 static void draw_time_display(GContext *ctx, GRect area) {
   const char *colon = strchr(s_time_text, ':');
   if (!colon) {
-    draw_text(ctx, s_time_text, s_font_time, area, GTextAlignmentLeft, color_text());
+    graphics_context_set_fill_color(ctx, color_text());
+    draw_time_digit_run(ctx, s_time_text, area.origin.x, area.origin.y + 3);
     return;
   }
 
@@ -590,26 +668,12 @@ static void draw_time_display(GContext *ctx, GRect area) {
   memcpy(hh, s_time_text, hlen);
   strncpy(mm, colon + 1, sizeof(mm) - 1);
 
-  GSize hsz = graphics_text_layout_get_content_size(
-      hh, s_font_time, area, GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft);
-
-  const int gap = 5;
-  const int dot = 7;
-  int colon_x = area.origin.x + hsz.w + gap;
-  int min_x = colon_x + dot + gap;
-
-  graphics_context_set_text_color(ctx, color_text());
-  graphics_draw_text(ctx, hh, s_font_time, area,
-                     GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
-
   graphics_context_set_fill_color(ctx, color_text());
-  graphics_fill_rect(ctx, GRect(colon_x, area.origin.y + 21, dot, dot), 1, GCornersAll);
-  graphics_fill_rect(ctx, GRect(colon_x, area.origin.y + 34, dot, dot), 1, GCornersAll);
-
-  GRect mbox = GRect(min_x, area.origin.y,
-                     area.size.w - (min_x - area.origin.x), area.size.h);
-  graphics_draw_text(ctx, mm, s_font_time, mbox,
-                     GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL);
+  int y = area.origin.y + 3;
+  int x = draw_time_digit_run(ctx, hh, area.origin.x, y) + TIME_COLON_GAP;
+  draw_time_colon(ctx, x, y);
+  x += TIME_COLON_W + TIME_COLON_GAP;
+  draw_time_digit_run(ctx, mm, x, y);
 }
 
 static int footer_text_w(const char *s) {
@@ -932,7 +996,6 @@ static void main_window_load(Window *window) {
   Layer *window_layer = window_get_root_layer(window);
   GRect bounds = layer_get_bounds(window_layer);
 
-  s_font_time = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_TIME_44));
   s_font_num = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_NUM_22));
   s_font_val = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_VAL_15));
   s_font_pix_lg = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_PIX_16));
@@ -959,7 +1022,6 @@ static void main_window_unload(Window *window) {
   layer_destroy(s_canvas_layer);
   s_canvas_layer = NULL;
 
-  fonts_unload_custom_font(s_font_time);
   fonts_unload_custom_font(s_font_num);
   fonts_unload_custom_font(s_font_val);
   fonts_unload_custom_font(s_font_pix_lg);
