@@ -70,7 +70,8 @@ placed colon. Monospace/custom fonts often give `:` too much cell width.
 - Background is warm off-white in light mode and deep navy/black in dark mode.
 - Small labels use Silkscreen. Keep date at 16px regular and footer/battery
   labels at 8px bold unless there is a strong reason to change.
-- Gauge values use JetBrains Mono Bold.
+- Gauge values use system `FONT_KEY_GOTHIC_18_BOLD` with the value box at
+  `GRect(center.x - 21, center.y - 6, 42, 18)`.
 - Weather and sun icons are PDC resources in `resources/icons`.
 - Footer is one dark bar split into three cells.
 - Battery color thresholds are intentional: normal green `0x00aa55`, low amber

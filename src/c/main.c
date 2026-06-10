@@ -522,7 +522,7 @@ static void draw_gauge(GContext *ctx, GPoint center, int percent, GColor accent,
             GRect(center.x - 22, center.y - 16, 44, 10),
             GTextAlignmentCenter, accent);
   draw_text(ctx, value, s_font_val,
-            GRect(center.x - 21, center.y - 1, 42, 18),
+            GRect(center.x - 21, center.y - 6, 42, 18),
             GTextAlignmentCenter, color_text());
 }
 
@@ -966,7 +966,7 @@ static void main_window_load(Window *window) {
 
   s_font_time = fonts_get_system_font(FONT_KEY_LECO_42_NUMBERS);
   s_font_temp = fonts_get_system_font(FONT_KEY_LECO_20_BOLD_NUMBERS);
-  s_font_val = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_VAL_15));
+  s_font_val = fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD);
   s_font_pix_lg = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_PIX_16));
   s_font_pix_sm = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_PIX_8));
 
@@ -991,7 +991,6 @@ static void main_window_unload(Window *window) {
   layer_destroy(s_canvas_layer);
   s_canvas_layer = NULL;
 
-  fonts_unload_custom_font(s_font_val);
   fonts_unload_custom_font(s_font_pix_lg);
   fonts_unload_custom_font(s_font_pix_sm);
 
