@@ -75,6 +75,8 @@ placed colon. Monospace/custom fonts often give `:` too much cell width.
 - Footer is one dark bar split into three cells.
 - Battery color thresholds are intentional: normal green `0x00aa55`, low amber
   `0xffaa00` below 40%, critical red `0xff0000` below 10%.
+- Step gauge text uses decimal `k` formatting below 10,000 steps (`8.6k`) and
+  whole `k` formatting at 10,000+ (`10k`) to avoid truncation inside the gauge.
 
 ## Configuration And Data
 

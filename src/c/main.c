@@ -333,7 +333,7 @@ static void draw_text(GContext *ctx, const char *text, GFont font, GRect box,
 static void format_steps(int32_t steps, char *buffer, size_t buffer_size) {
   if (steps < 0) {
     snprintf(buffer, buffer_size, "--");
-  } else if (steps >= 100000) {
+  } else if (steps >= 10000) {
     snprintf(buffer, buffer_size, "%ldk", (long)(steps / 1000));
   } else if (steps >= 1000) {
     snprintf(buffer, buffer_size, "%ld.%ldk", (long)(steps / 1000),
