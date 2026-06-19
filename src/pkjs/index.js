@@ -241,6 +241,10 @@ function firstNumber(arrayValue, fallback) {
   return fallback;
 }
 
+function numberOrFallback(value, fallback) {
+  return typeof value === 'number' ? value : fallback;
+}
+
 function formatIsoTime(value) {
   if (!value || value.length < 16) {
     return '--:--';
@@ -290,7 +294,7 @@ function locationSuccess(pos) {
   var url = 'https://api.open-meteo.com/v1/forecast?' +
       'latitude=' + encodeURIComponent(pos.coords.latitude) +
       '&longitude=' + encodeURIComponent(pos.coords.longitude) +
-      '&current=temperature_2m,weather_code' +
+      '&current=temperature_2m,weather_code,uv_index' +
       '&hourly=precipitation_probability,uv_index' +
       '&daily=sunrise,sunset' +
       '&forecast_hours=1' +
@@ -308,7 +312,10 @@ function locationSuccess(pos) {
       'TEMPERATURE': Math.round(current.temperature_2m || 0),
       'WEATHER_CODE': Math.round(current.weather_code || 0),
       'RAIN_CHANCE': Math.round(firstNumber(hourly.precipitation_probability, 0)),
-      'UV_INDEX': Math.round(firstNumber(hourly.uv_index, 0) * 10),
+      'UV_INDEX': Math.round(numberOrFallback(
+        current.uv_index,
+        firstNumber(hourly.uv_index, 0)
+      ) * 10),
       'SUN_EVENT_TIME': sunEvent.time,
       'SUN_EVENT_TYPE': sunEvent.type
     };
