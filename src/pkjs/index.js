@@ -39,20 +39,42 @@ syncClaySettings();
 
 var xhrRequest = function(url, type, callback, errorCallback) {
   var xhr = new XMLHttpRequest();
+  var finished = false;
+
+  function fail(message) {
+    if (finished) {
+      return;
+    }
+    finished = true;
+    if (errorCallback) {
+      errorCallback(message);
+    }
+  }
+
   xhr.onload = function() {
+    if (finished) {
+      return;
+    }
     if (xhr.status >= 200 && xhr.status < 300) {
+      finished = true;
       callback(this.responseText);
-    } else if (errorCallback) {
-      errorCallback('HTTP ' + xhr.status);
+    } else {
+      fail('HTTP ' + xhr.status);
     }
   };
   xhr.onerror = function() {
-    if (errorCallback) {
-      errorCallback('Network error');
-    }
+    fail('Network error');
   };
-  xhr.open(type, url);
-  xhr.send();
+  xhr.ontimeout = function() {
+    fail('Request timeout');
+  };
+  xhr.timeout = 15000;
+  try {
+    xhr.open(type, url);
+    xhr.send();
+  } catch (err) {
+    fail('Request exception');
+  }
 };
 
 function copyDefaults(target) {
@@ -234,15 +256,24 @@ function sendSettings() {
   );
 }
 
-function firstNumber(arrayValue, fallback) {
-  if (arrayValue && arrayValue.length && typeof arrayValue[0] === 'number') {
-    return arrayValue[0];
-  }
-  return fallback;
+function isFiniteNumber(value) {
+  return typeof value === 'number' && isFinite(value);
 }
 
-function numberOrFallback(value, fallback) {
-  return typeof value === 'number' ? value : fallback;
+function firstNumber(arrayValue) {
+  if (arrayValue && arrayValue.length && isFiniteNumber(arrayValue[0])) {
+    return arrayValue[0];
+  }
+  return null;
+}
+
+function isValidClockTime(value) {
+  if (typeof value !== 'string' || !/^\d{2}:\d{2}$/.test(value)) {
+    return false;
+  }
+  var hour = parseInt(value.substring(0, 2), 10);
+  var minute = parseInt(value.substring(3, 5), 10);
+  return hour <= 23 && minute <= 59;
 }
 
 function formatIsoTime(value) {
@@ -302,23 +333,43 @@ function locationSuccess(pos) {
       '&timezone=auto';
 
   xhrRequest(url, 'GET', function(responseText) {
-    var json = JSON.parse(responseText);
-    var current = json.current || {};
-    var hourly = json.hourly || {};
-    var daily = json.daily || {};
-    var sunEvent = chooseNextSunEvent(current.time, daily);
+    var dictionary;
+    try {
+      var json = JSON.parse(responseText);
+      var current = json.current || {};
+      var hourly = json.hourly || {};
+      var daily = json.daily || {};
+      var sunEvent = chooseNextSunEvent(current.time, daily);
+      var temperature = current.temperature_2m;
+      var weatherCode = current.weather_code;
+      var rainChance = firstNumber(hourly.precipitation_probability);
+      var uvIndex = isFiniteNumber(current.uv_index) ?
+          current.uv_index : firstNumber(hourly.uv_index);
 
-    var dictionary = {
-      'TEMPERATURE': Math.round(current.temperature_2m || 0),
-      'WEATHER_CODE': Math.round(current.weather_code || 0),
-      'RAIN_CHANCE': Math.round(firstNumber(hourly.precipitation_probability, 0)),
-      'UV_INDEX': Math.round(numberOrFallback(
-        current.uv_index,
-        firstNumber(hourly.uv_index, 0)
-      ) * 10),
-      'SUN_EVENT_TIME': sunEvent.time,
-      'SUN_EVENT_TYPE': sunEvent.type
-    };
+      var completeWeather = isFiniteNumber(temperature) && temperature >= -100 &&
+          temperature <= 100 && isFiniteNumber(weatherCode) && weatherCode >= 0 &&
+          weatherCode <= 99 && isFiniteNumber(rainChance) && rainChance >= 0 &&
+          rainChance <= 100 && isFiniteNumber(uvIndex) && uvIndex >= 0 &&
+          uvIndex <= 99.9 && isValidClockTime(sunEvent.time) &&
+          (sunEvent.type === 0 || sunEvent.type === 1);
+
+      if (!completeWeather) {
+        throw new Error('Incomplete weather response');
+      }
+
+      dictionary = {
+        'TEMPERATURE': Math.round(temperature),
+        'WEATHER_CODE': Math.round(weatherCode),
+        'RAIN_CHANCE': Math.round(rainChance),
+        'UV_INDEX': Math.round(uvIndex * 10),
+        'SUN_EVENT_TIME': sunEvent.time,
+        'SUN_EVENT_TYPE': sunEvent.type
+      };
+    } catch (err) {
+      console.log('Weather response invalid: ' + err.message);
+      sendWeatherError();
+      return;
+    }
 
     Pebble.sendAppMessage(dictionary,
       function() { console.log('Signal Deck weather sent'); },

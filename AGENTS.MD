@@ -76,6 +76,8 @@ placed colon. Monospace/custom fonts often give `:` too much cell width.
 - Footer is one dark bar split into three cells.
 - Battery color thresholds are intentional: normal green `0x00aa55`, low amber
   `0xffaa00` below 40%, critical red `0xff0000` below 10%.
+- Battery percentage text intentionally caps at `99%` so it stays clear of the
+  capsule edge; the icon fill and threshold color still use the true 0–100%.
 - Step gauge text uses decimal `k` formatting below 10,000 steps (`8.6k`) and
   whole `k` formatting at 10,000+ (`10k`) to avoid truncation inside the gauge.
 
@@ -86,9 +88,12 @@ Configuration uses `@rebble/clay` with `enableMultiJS: true` and the
 or renaming settings.
 
 Weather comes from Open-Meteo via phone-side JS and uses location permission.
-The app requests weather every 30 minutes when weather is enabled. Demo
-fallbacks exist so emulator screenshots remain useful when sensors or weather
-data are unavailable.
+The app requests weather every 30 minutes when weather is enabled. Health demo
+fallbacks exist so emulator screenshots remain useful when sensors are empty.
+Unavailable, incomplete, or timed-out weather must clear all weather fields
+atomically: temperature/rain/UV use `--`, sun uses `--:--` internally, the rain
+gauge has no progress arc, and weather/sun icons are hidden. A complete valid
+weather payload restores the snapshot atomically.
 
 The tick timer should stay on `MINUTE_UNIT` unless seconds are explicitly added.
 

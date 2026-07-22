@@ -7,6 +7,7 @@
 #define DEFAULT_USER_AGE 30
 #define DEFAULT_DEMO_STEPS 8600
 #define DEFAULT_DEMO_HR 72
+#define WEATHER_REQUEST_TIMEOUT_MS 20000
 #define RING_RADIUS 28
 #define RING_STROKE 5
 
@@ -73,20 +74,22 @@ static char s_time_text[8] = "--:--";
 static char s_date_text[16] = "--- -- ---";
 static char s_steps_text[10] = "8.6k";
 static char s_hr_text[8] = "72";
-static char s_rain_text[8] = "42%";
-static char s_temp_text[8] = "18C";
-static char s_uv_text[8] = "3.1";
-static char s_sun_text[8] = "21:14";
+static char s_rain_text[8] = "--";
+static char s_temp_text[8] = "--";
+static char s_uv_text[8] = "--";
+static char s_sun_text[8] = "--:--";
 static char s_world_text[16] = "NZ --:--";
 static char s_battery_text[8] = "--%";
 
 static int s_steps_percent = 100;
 static int s_hr_percent = 38;
-static int s_rain_percent = 42;
-static int s_weather_code = 2;
-static int s_sun_event_type = 1;
+static int s_rain_percent = 0;
+static int s_weather_code = -1;
+static int s_sun_event_type = -1;
 static int s_battery_percent = 0;
-static int s_temp_c = 18;
+static int s_temp_c = 0;
+static bool s_weather_available = false;
+static AppTimer *s_weather_request_timer;
 
 static GFont s_font_time;
 static GFont s_font_temp;
@@ -347,7 +350,23 @@ static int max_hr_for_gauge(void) {
   return clamp_int(220 - s_settings.user_age, 120, 210);
 }
 
+static void set_weather_unavailable(void) {
+  s_weather_available = false;
+  s_weather_code = -1;
+  s_sun_event_type = -1;
+  s_rain_percent = 0;
+  snprintf(s_temp_text, sizeof(s_temp_text), "--");
+  snprintf(s_rain_text, sizeof(s_rain_text), "--");
+  snprintf(s_uv_text, sizeof(s_uv_text), "--");
+  snprintf(s_sun_text, sizeof(s_sun_text), "--:--");
+}
+
 static void format_temp_text(void) {
+  if (!s_weather_available) {
+    snprintf(s_temp_text, sizeof(s_temp_text), "--");
+    return;
+  }
+
   int temp = s_temp_c;
   char unit = 'C';
   if (s_settings.temp_unit == 1) {
@@ -489,7 +508,8 @@ static void mark_canvas_dirty(void) {
 
 static void battery_callback(BatteryChargeState state) {
   s_battery_percent = clamp_int(state.charge_percent, 0, 100);
-  snprintf(s_battery_text, sizeof(s_battery_text), "%d%%", state.charge_percent);
+  int display_percent = clamp_int(s_battery_percent, 0, 99);
+  snprintf(s_battery_text, sizeof(s_battery_text), "%d%%", display_percent);
   mark_canvas_dirty();
 }
 
@@ -635,7 +655,8 @@ static void draw_temperature_display(GContext *ctx, GRect area) {
   const int unit_w = show_unit && unit[0] ? 8 : 0;
   GRect number_box = GRect(area.origin.x, area.origin.y,
                            area.size.w - unit_w - 1, area.size.h);
-  draw_text(ctx, number, s_font_temp, number_box, GTextAlignmentRight, color_temp());
+  draw_text(ctx, number, s_font_temp, number_box, GTextAlignmentRight,
+            s_weather_available ? color_temp() : color_muted());
 
   if (show_unit && unit[0]) {
     draw_text(ctx, unit, s_font_pix_sm,
@@ -664,6 +685,11 @@ static void draw_footer_pair(GContext *ctx, int col_cx, int y, const char *a,
 }
 
 static void draw_footer_sun(GContext *ctx, int col_cx, int text_y, int icon_y) {
+  if (!s_settings.show_weather || !s_weather_available) {
+    draw_footer_pair(ctx, col_cx, text_y, "SUN", color_sun(), "--", GColorWhite);
+    return;
+  }
+
   const int icon_w = 22;
   const int gap = 3;
   int tw = footer_text_w(s_sun_text);
@@ -676,6 +702,7 @@ static void draw_footer_sun(GContext *ctx, int col_cx, int text_y, int icon_y) {
 static void draw_footer_cell(GContext *ctx, int x, int w, int mode) {
   int cx = x + (w / 2);
   const int text_y = 197;
+  const bool weather_visible = s_settings.show_weather && s_weather_available;
 
   switch (mode) {
     case FooterSun:
@@ -690,13 +717,16 @@ static void draw_footer_cell(GContext *ctx, int x, int w, int mode) {
                        s_settings.show_battery_percent ? s_battery_text : "", GColorWhite);
       break;
     case FooterWeather:
-      draw_footer_pair(ctx, cx, text_y, "WX", color_rain(), s_temp_text, GColorWhite);
+      draw_footer_pair(ctx, cx, text_y, "WX", color_rain(),
+                       weather_visible ? s_temp_text : "--", GColorWhite);
       break;
     case FooterTemp:
-      draw_footer_pair(ctx, cx, text_y, "TMP", color_temp(), s_temp_text, GColorWhite);
+      draw_footer_pair(ctx, cx, text_y, "TMP", color_temp(),
+                       weather_visible ? s_temp_text : "--", GColorWhite);
       break;
     case FooterRain:
-      draw_footer_pair(ctx, cx, text_y, "RAIN", color_rain(), s_rain_text, GColorWhite);
+      draw_footer_pair(ctx, cx, text_y, "RAIN", color_rain(),
+                       weather_visible ? s_rain_text : "--", GColorWhite);
       break;
     case FooterSteps:
       draw_footer_pair(ctx, cx, text_y, "STEP", color_steps(), s_steps_text, GColorWhite);
@@ -706,7 +736,8 @@ static void draw_footer_cell(GContext *ctx, int x, int w, int mode) {
       break;
     case FooterUV:
     default:
-      draw_footer_pair(ctx, cx, text_y, "UV", color_sun(), s_uv_text, GColorWhite);
+      draw_footer_pair(ctx, cx, text_y, "UV", color_sun(),
+                       weather_visible ? s_uv_text : "--", GColorWhite);
       break;
   }
 }
@@ -767,7 +798,9 @@ static void canvas_update_proc(Layer *layer, GContext *ctx) {
   draw_time_display(ctx, GRect(7, 46, 138, 50));
   if (s_settings.show_weather) {
     draw_temperature_display(ctx, GRect(width - 51, 50, 39, 24));
-    draw_weather_pdc(ctx, GPoint(width - 40, 70), s_weather_code);
+    if (s_weather_available) {
+      draw_weather_pdc(ctx, GPoint(width - 40, 70), s_weather_code);
+    }
   }
 
   graphics_context_set_stroke_color(ctx, color_line());
@@ -816,6 +849,32 @@ static bool apply_bool_setting(DictionaryIterator *iterator, uint32_t key, bool 
   return true;
 }
 
+static bool is_valid_sun_time(const char *value) {
+  if (!value || strlen(value) != 5 || value[2] != ':') {
+    return false;
+  }
+  if (value[0] < '0' || value[0] > '9' || value[1] < '0' || value[1] > '9' ||
+      value[3] < '0' || value[3] > '9' || value[4] < '0' || value[4] > '9') {
+    return false;
+  }
+  int hour = ((value[0] - '0') * 10) + (value[1] - '0');
+  int minute = ((value[3] - '0') * 10) + (value[4] - '0');
+  return hour <= 23 && minute <= 59;
+}
+
+static void cancel_weather_request_timeout(void) {
+  if (s_weather_request_timer) {
+    app_timer_cancel(s_weather_request_timer);
+    s_weather_request_timer = NULL;
+  }
+}
+
+static void weather_request_timeout_callback(void *context) {
+  s_weather_request_timer = NULL;
+  set_weather_unavailable();
+  mark_canvas_dirty();
+}
+
 static void inbox_received_callback(DictionaryIterator *iterator, void *context) {
   bool settings_changed = false;
 
@@ -826,27 +885,37 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
   Tuple *sun_time_tuple = dict_find(iterator, MESSAGE_KEY_SUN_EVENT_TIME);
   Tuple *sun_type_tuple = dict_find(iterator, MESSAGE_KEY_SUN_EVENT_TYPE);
 
-  if (temp_tuple) {
-    s_temp_c = (int)temp_tuple->value->int32;
-    format_temp_text();
-  }
-  if (weather_code_tuple) {
-    s_weather_code = (int)weather_code_tuple->value->int32;
-  }
-  if (rain_tuple) {
-    int rain = clamp_int((int)rain_tuple->value->int32, 0, 100);
-    s_rain_percent = rain;
-    snprintf(s_rain_text, sizeof(s_rain_text), "%d%%", rain);
-  }
-  if (uv_tuple) {
-    int uv_scaled = clamp_int((int)uv_tuple->value->int32, 0, 999);
-    snprintf(s_uv_text, sizeof(s_uv_text), "%d.%d", uv_scaled / 10, uv_scaled % 10);
-  }
-  if (sun_time_tuple) {
-    snprintf(s_sun_text, sizeof(s_sun_text), "%s", sun_time_tuple->value->cstring);
-  }
-  if (sun_type_tuple) {
-    s_sun_event_type = (int)sun_type_tuple->value->int32;
+  const bool has_weather_payload = temp_tuple || weather_code_tuple || rain_tuple ||
+                                   uv_tuple || sun_time_tuple || sun_type_tuple;
+  if (has_weather_payload) {
+    cancel_weather_request_timeout();
+
+    int temp = temp_tuple ? (int)temp_tuple->value->int32 : 0;
+    int weather_code = weather_code_tuple ? (int)weather_code_tuple->value->int32 : -1;
+    int rain = rain_tuple ? (int)rain_tuple->value->int32 : -1;
+    int uv_scaled = uv_tuple ? (int)uv_tuple->value->int32 : -1;
+    int sun_type = sun_type_tuple ? (int)sun_type_tuple->value->int32 : -1;
+    const char *sun_time = sun_time_tuple ? sun_time_tuple->value->cstring : NULL;
+
+    const bool complete_weather = temp_tuple && weather_code_tuple && rain_tuple &&
+        uv_tuple && sun_time_tuple && sun_type_tuple && temp >= -100 && temp <= 100 &&
+        weather_code >= 0 && weather_code <= 99 && rain >= 0 && rain <= 100 &&
+        uv_scaled >= 0 && uv_scaled <= 999 && (sun_type == 0 || sun_type == 1) &&
+        is_valid_sun_time(sun_time);
+
+    if (complete_weather) {
+      s_weather_available = true;
+      s_temp_c = temp;
+      s_weather_code = weather_code;
+      s_rain_percent = rain;
+      s_sun_event_type = sun_type;
+      format_temp_text();
+      snprintf(s_rain_text, sizeof(s_rain_text), "%d%%", rain);
+      snprintf(s_uv_text, sizeof(s_uv_text), "%d.%d", uv_scaled / 10, uv_scaled % 10);
+      snprintf(s_sun_text, sizeof(s_sun_text), "%s", sun_time);
+    } else {
+      set_weather_unavailable();
+    }
   }
 
   settings_changed |= apply_bool_setting(iterator, MESSAGE_KEY_DARK_MODE,
@@ -915,6 +984,10 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
   if (settings_changed) {
     save_settings();
     window_set_background_color(s_main_window, color_bg());
+    if (!s_settings.show_weather) {
+      cancel_weather_request_timeout();
+      set_weather_unavailable();
+    }
     update_dashboard();
     if (s_settings.show_weather) {
       request_weather();
@@ -932,20 +1005,33 @@ static void inbox_dropped_callback(AppMessageResult reason, void *context) {
 static void outbox_failed_callback(DictionaryIterator *iterator, AppMessageResult reason,
                                    void *context) {
   APP_LOG(APP_LOG_LEVEL_ERROR, "Outbox failed: %d", reason);
+  if (iterator && dict_find(iterator, MESSAGE_KEY_REQUEST_WEATHER)) {
+    cancel_weather_request_timeout();
+    set_weather_unavailable();
+    mark_canvas_dirty();
+  }
 }
 
-static void request_key(uint32_t key) {
+static bool request_key(uint32_t key) {
   DictionaryIterator *iter;
   AppMessageResult result = app_message_outbox_begin(&iter);
   if (result == APP_MSG_OK && iter) {
     dict_write_uint8(iter, key, 1);
-    app_message_outbox_send();
+    return app_message_outbox_send() == APP_MSG_OK;
   }
+  return false;
 }
 
 static void request_weather(void) {
   if (s_settings.show_weather) {
-    request_key(MESSAGE_KEY_REQUEST_WEATHER);
+    cancel_weather_request_timeout();
+    if (request_key(MESSAGE_KEY_REQUEST_WEATHER)) {
+      s_weather_request_timer = app_timer_register(
+          WEATHER_REQUEST_TIMEOUT_MS, weather_request_timeout_callback, NULL);
+    } else {
+      set_weather_unavailable();
+      mark_canvas_dirty();
+    }
   }
 }
 
@@ -1034,6 +1120,7 @@ static void init(void) {
 }
 
 static void deinit(void) {
+  cancel_weather_request_timeout();
   tick_timer_service_unsubscribe();
   battery_state_service_unsubscribe();
 #if defined(PBL_HEALTH)
