@@ -18,7 +18,7 @@ var DEFAULT_SETTINGS = {
   footerLeft: 0,
   footerCenter: 1,
   footerRight: 2,
-  demoFallback: true,
+  demoFallback: false,
   showWeather: true,
   showHealth: true,
   showBatteryPercent: true
@@ -110,7 +110,7 @@ function normalizeSettings(value) {
   value.footerLeft = numberInRange(value.footerLeft, 0, 8, DEFAULT_SETTINGS.footerLeft);
   value.footerCenter = numberInRange(value.footerCenter, 0, 8, DEFAULT_SETTINGS.footerCenter);
   value.footerRight = numberInRange(value.footerRight, 0, 8, DEFAULT_SETTINGS.footerRight);
-  value.demoFallback = value.demoFallback !== false;
+  value.demoFallback = value.demoFallback === true;
   value.showWeather = value.showWeather !== false;
   value.showHealth = value.showHealth !== false;
   value.showBatteryPercent = value.showBatteryPercent !== false;

@@ -162,7 +162,7 @@ module.exports = [
         type: 'toggle',
         messageKey: 'demoFallback',
         label: 'Use demo values when sensors are empty',
-        defaultValue: true
+        defaultValue: false
       },
       {
         type: 'toggle',

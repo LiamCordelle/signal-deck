@@ -219,7 +219,7 @@ static void default_settings(void) {
   s_settings.footer_left = FooterUV;
   s_settings.footer_center = FooterSun;
   s_settings.footer_right = FooterWorld;
-  s_settings.demo_fallback = true;
+  s_settings.demo_fallback = false;
   s_settings.show_weather = true;
   s_settings.show_health = true;
   s_settings.show_battery_percent = true;

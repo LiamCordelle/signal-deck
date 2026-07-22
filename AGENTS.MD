@@ -89,7 +89,8 @@ or renaming settings.
 
 Weather comes from Open-Meteo via phone-side JS and uses location permission.
 The app requests weather every 30 minutes when weather is enabled. Health demo
-fallbacks exist so emulator screenshots remain useful when sensors are empty.
+fallbacks are opt-in and default to off; when enabled they keep emulator
+screenshots useful while sensors are empty.
 Unavailable, incomplete, or timed-out weather must clear all weather fields
 atomically: temperature/rain/UV use `--`, sun uses `--:--` internally, the rain
 gauge has no progress arc, and weather/sun icons are hidden. A complete valid
