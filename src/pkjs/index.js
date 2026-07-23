@@ -35,6 +35,10 @@ var WORLD_OPTIONS = {
 };
 
 var settings = loadSettings();
+var appMessageQueue = [];
+var appMessageSending = false;
+var appMessageRetryPending = false;
+var weatherFetchInFlight = false;
 syncClaySettings();
 
 var xhrRequest = function(url, type, callback, errorCallback) {
@@ -68,9 +72,12 @@ var xhrRequest = function(url, type, callback, errorCallback) {
   xhr.ontimeout = function() {
     fail('Request timeout');
   };
-  xhr.timeout = 15000;
+  xhr.onabort = function() {
+    fail('Request aborted');
+  };
   try {
     xhr.open(type, url);
+    xhr.timeout = 15000;
     xhr.send();
   } catch (err) {
     fail('Request exception');
@@ -249,8 +256,61 @@ function settingsDictionary() {
   };
 }
 
+function sendNextAppMessage() {
+  if (appMessageSending || appMessageRetryPending || !appMessageQueue.length) {
+    return;
+  }
+
+  var entry = appMessageQueue[0];
+  appMessageSending = true;
+
+  function sent() {
+    appMessageQueue.shift();
+    appMessageSending = false;
+    if (entry.success) {
+      entry.success();
+    }
+    sendNextAppMessage();
+  }
+
+  function failed() {
+    appMessageSending = false;
+    entry.attempts++;
+    if (entry.attempts < 3) {
+      appMessageRetryPending = true;
+      setTimeout(function() {
+        appMessageRetryPending = false;
+        sendNextAppMessage();
+      }, entry.attempts * 500);
+      return;
+    }
+
+    appMessageQueue.shift();
+    if (entry.failure) {
+      entry.failure();
+    }
+    sendNextAppMessage();
+  }
+
+  try {
+    Pebble.sendAppMessage(entry.dictionary, sent, failed);
+  } catch (err) {
+    failed();
+  }
+}
+
+function enqueueAppMessage(dictionary, success, failure) {
+  appMessageQueue.push({
+    dictionary: dictionary,
+    success: success,
+    failure: failure,
+    attempts: 0
+  });
+  sendNextAppMessage();
+}
+
 function sendSettings() {
-  Pebble.sendAppMessage(settingsDictionary(),
+  enqueueAppMessage(settingsDictionary(),
     function() { console.log('Settings sent'); },
     function() { console.log('Settings send failed'); }
   );
@@ -316,9 +376,17 @@ function chooseNextSunEvent(currentTime, daily) {
 }
 
 function sendWeatherError() {
-  Pebble.sendAppMessage({
-    'WEATHER_CODE': -1
-  });
+  enqueueAppMessage(
+    { 'WEATHER_CODE': -1 },
+    function() {
+      weatherFetchInFlight = false;
+      console.log('Weather error sent');
+    },
+    function() {
+      weatherFetchInFlight = false;
+      console.log('Weather error send failed');
+    }
+  );
 }
 
 function locationSuccess(pos) {
@@ -371,9 +439,15 @@ function locationSuccess(pos) {
       return;
     }
 
-    Pebble.sendAppMessage(dictionary,
-      function() { console.log('Signal Deck weather sent'); },
-      function() { console.log('Signal Deck weather send failed'); }
+    enqueueAppMessage(dictionary,
+      function() {
+        weatherFetchInFlight = false;
+        console.log('Signal Deck weather sent');
+      },
+      function() {
+        weatherFetchInFlight = false;
+        console.log('Signal Deck weather send failed');
+      }
     );
   }, function(error) {
     console.log('Weather request failed: ' + error);
@@ -390,16 +464,26 @@ function getWeather() {
   if (!settings.showWeather) {
     return;
   }
-  navigator.geolocation.getCurrentPosition(
-    locationSuccess,
-    locationError,
-    { timeout: 15000, maximumAge: 300000 }
-  );
+  if (weatherFetchInFlight) {
+    console.log('Weather request already in progress');
+    return;
+  }
+
+  weatherFetchInFlight = true;
+  try {
+    navigator.geolocation.getCurrentPosition(
+      locationSuccess,
+      locationError,
+      { timeout: 15000, maximumAge: 300000 }
+    );
+  } catch (err) {
+    console.log('Location request failed: ' + err);
+    sendWeatherError();
+  }
 }
 
 Pebble.addEventListener('ready', function() {
   sendSettings();
-  getWeather();
 });
 
 Pebble.addEventListener('showConfiguration', function() {
@@ -415,7 +499,6 @@ Pebble.addEventListener('webviewclosed', function(e) {
     settings = copyDefaults(flattenClaySettings(clay.getSettings(e.response, false)));
     saveSettings();
     sendSettings();
-    getWeather();
   } catch (err) {
     console.log('Config parse failed: ' + err);
   }

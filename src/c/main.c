@@ -9,8 +9,11 @@
 #define DEFAULT_USER_AGE 30
 #define DEFAULT_DEMO_STEPS 8600
 #define DEFAULT_DEMO_HR 72
-#define WEATHER_REQUEST_TIMEOUT_MS 20000
+#define WEATHER_REQUEST_TIMEOUT_MS 45000
+#define WEATHER_SETTINGS_GRACE_MS 3000
 #define WEATHER_CACHE_RETENTION_SECONDS (3 * 60 * 60)
+#define WEATHER_SEND_RETRY_COUNT 2
+#define WEATHER_FETCH_RETRY_COUNT 3
 #define RING_RADIUS 28
 #define RING_STROKE 5
 
@@ -106,6 +109,13 @@ static int s_uv_scaled = 0;
 static bool s_weather_available = false;
 static time_t s_weather_updated_at = 0;
 static AppTimer *s_weather_request_timer;
+static AppTimer *s_weather_send_retry_timer;
+static AppTimer *s_weather_fetch_retry_timer;
+static AppTimer *s_weather_settings_grace_timer;
+static uint8_t s_weather_send_retry_attempt;
+static uint8_t s_weather_fetch_retry_attempt;
+static bool s_weather_request_in_flight;
+static bool s_startup_weather_started;
 
 static GFont s_font_time;
 static GFont s_font_temp;
@@ -125,6 +135,7 @@ static GDrawCommandImage *s_sun_set;
 
 static void request_weather(void);
 static void request_settings(void);
+static void start_weather_refresh_cycle(void);
 
 static int clamp_int(int value, int min_value, int max_value) {
   if (value < min_value) {
@@ -843,8 +854,9 @@ static void canvas_update_proc(Layer *layer, GContext *ctx) {
 static void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
   update_dashboard();
 
-  if (s_settings.show_weather && tick_time->tm_min % 30 == 0) {
-    request_weather();
+  if (s_startup_weather_started && s_settings.show_weather &&
+      tick_time->tm_min % 30 == 0) {
+    start_weather_refresh_cycle();
   }
 }
 
@@ -973,14 +985,90 @@ static void cancel_weather_request_timeout(void) {
   }
 }
 
+static void cancel_weather_send_retry(void) {
+  if (s_weather_send_retry_timer) {
+    app_timer_cancel(s_weather_send_retry_timer);
+    s_weather_send_retry_timer = NULL;
+  }
+}
+
+static void cancel_weather_fetch_retry(void) {
+  if (s_weather_fetch_retry_timer) {
+    app_timer_cancel(s_weather_fetch_retry_timer);
+    s_weather_fetch_retry_timer = NULL;
+  }
+}
+
+static void cancel_weather_settings_grace(void) {
+  if (s_weather_settings_grace_timer) {
+    app_timer_cancel(s_weather_settings_grace_timer);
+    s_weather_settings_grace_timer = NULL;
+  }
+}
+
+static void cancel_weather_refresh(void) {
+  cancel_weather_request_timeout();
+  cancel_weather_send_retry();
+  cancel_weather_fetch_retry();
+  s_weather_request_in_flight = false;
+  s_weather_send_retry_attempt = 0;
+  s_weather_fetch_retry_attempt = 0;
+}
+
+static bool weather_refresh_is_active(void) {
+  return s_weather_request_in_flight || s_weather_send_retry_timer ||
+      s_weather_fetch_retry_timer;
+}
+
+static void weather_send_retry_callback(void *context) {
+  s_weather_send_retry_timer = NULL;
+  request_weather();
+}
+
+static void weather_fetch_retry_callback(void *context) {
+  s_weather_fetch_retry_timer = NULL;
+  s_weather_send_retry_attempt = 0;
+  request_weather();
+}
+
+static void schedule_weather_fetch_retry(void) {
+  static const uint32_t retry_delays_ms[WEATHER_FETCH_RETRY_COUNT] = {
+    60 * 1000,
+    5 * 60 * 1000,
+    15 * 60 * 1000
+  };
+
+  if (!s_settings.show_weather || s_weather_fetch_retry_timer ||
+      s_weather_fetch_retry_attempt >= WEATHER_FETCH_RETRY_COUNT) {
+    return;
+  }
+
+  const uint32_t delay_ms = retry_delays_ms[s_weather_fetch_retry_attempt];
+  s_weather_fetch_retry_attempt++;
+  APP_LOG(APP_LOG_LEVEL_INFO, "Weather retry %d scheduled in %lu seconds",
+          s_weather_fetch_retry_attempt, (unsigned long)(delay_ms / 1000));
+  s_weather_fetch_retry_timer =
+      app_timer_register(delay_ms, weather_fetch_retry_callback, NULL);
+}
+
+static void weather_request_failed(void) {
+  cancel_weather_request_timeout();
+  cancel_weather_send_retry();
+  s_weather_request_in_flight = false;
+  s_weather_send_retry_attempt = 0;
+  handle_weather_failure();
+  schedule_weather_fetch_retry();
+  mark_canvas_dirty();
+}
+
 static void weather_request_timeout_callback(void *context) {
   s_weather_request_timer = NULL;
-  handle_weather_failure();
-  mark_canvas_dirty();
+  weather_request_failed();
 }
 
 static void inbox_received_callback(DictionaryIterator *iterator, void *context) {
   bool settings_changed = false;
+  const bool weather_was_enabled = s_settings.show_weather;
 
   Tuple *temp_tuple = dict_find(iterator, MESSAGE_KEY_TEMPERATURE);
   Tuple *weather_code_tuple = dict_find(iterator, MESSAGE_KEY_WEATHER_CODE);
@@ -992,8 +1080,6 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
   const bool has_weather_payload = temp_tuple || weather_code_tuple || rain_tuple ||
                                    uv_tuple || sun_time_tuple || sun_type_tuple;
   if (has_weather_payload) {
-    cancel_weather_request_timeout();
-
     int temp = temp_tuple ? (int)temp_tuple->value->int32 : 0;
     int weather_code = weather_code_tuple ? (int)weather_code_tuple->value->int32 : -1;
     int rain = rain_tuple ? (int)rain_tuple->value->int32 : -1;
@@ -1007,11 +1093,14 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
                                   sun_time);
 
     if (complete_weather) {
+      cancel_weather_refresh();
       apply_weather_snapshot(temp, weather_code, rain, uv_scaled, sun_type, sun_time,
                              time(NULL));
       save_weather_cache();
+    } else if (s_weather_request_in_flight) {
+      weather_request_failed();
     } else {
-      handle_weather_failure();
+      APP_LOG(APP_LOG_LEVEL_INFO, "Ignoring unsolicited weather error");
     }
   }
 
@@ -1079,14 +1168,18 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
                                          &s_settings.show_battery_percent);
 
   if (settings_changed) {
+    cancel_weather_settings_grace();
+    const bool should_start_initial_weather = !s_startup_weather_started;
+    s_startup_weather_started = true;
     save_settings();
     window_set_background_color(s_main_window, color_bg());
     if (!s_settings.show_weather) {
-      cancel_weather_request_timeout();
+      cancel_weather_refresh();
     }
     update_dashboard();
-    if (s_settings.show_weather) {
-      request_weather();
+    if (s_settings.show_weather &&
+        (should_start_initial_weather || !weather_was_enabled)) {
+      start_weather_refresh_cycle();
     }
     return;
   }
@@ -1101,38 +1194,82 @@ static void inbox_dropped_callback(AppMessageResult reason, void *context) {
 static void outbox_failed_callback(DictionaryIterator *iterator, AppMessageResult reason,
                                    void *context) {
   APP_LOG(APP_LOG_LEVEL_ERROR, "Outbox failed: %d", reason);
-  if (iterator && dict_find(iterator, MESSAGE_KEY_REQUEST_WEATHER)) {
-    cancel_weather_request_timeout();
-    handle_weather_failure();
-    mark_canvas_dirty();
+  if (s_weather_request_in_flight && iterator &&
+      dict_find(iterator, MESSAGE_KEY_REQUEST_WEATHER)) {
+    weather_request_failed();
   }
 }
 
-static bool request_key(uint32_t key) {
+static AppMessageResult request_key(uint32_t key) {
   DictionaryIterator *iter;
   AppMessageResult result = app_message_outbox_begin(&iter);
   if (result == APP_MSG_OK && iter) {
     dict_write_uint8(iter, key, 1);
-    return app_message_outbox_send() == APP_MSG_OK;
+    return app_message_outbox_send();
   }
-  return false;
+  return result;
 }
 
 static void request_weather(void) {
-  if (s_settings.show_weather) {
-    cancel_weather_request_timeout();
-    if (request_key(MESSAGE_KEY_REQUEST_WEATHER)) {
-      s_weather_request_timer = app_timer_register(
-          WEATHER_REQUEST_TIMEOUT_MS, weather_request_timeout_callback, NULL);
-    } else {
-      handle_weather_failure();
-      mark_canvas_dirty();
+  static const uint32_t send_retry_delays_ms[WEATHER_SEND_RETRY_COUNT] = {
+    1000,
+    3000
+  };
+
+  if (!s_settings.show_weather || s_weather_request_in_flight ||
+      s_weather_send_retry_timer || s_weather_fetch_retry_timer) {
+    return;
+  }
+
+  const AppMessageResult result = request_key(MESSAGE_KEY_REQUEST_WEATHER);
+  if (result == APP_MSG_OK) {
+    s_weather_request_in_flight = true;
+    s_weather_send_retry_attempt = 0;
+    s_weather_request_timer = app_timer_register(
+        WEATHER_REQUEST_TIMEOUT_MS, weather_request_timeout_callback, NULL);
+    if (!s_weather_request_timer) {
+      weather_request_failed();
+    }
+    return;
+  }
+
+  APP_LOG(APP_LOG_LEVEL_INFO, "Weather request send failed: %d", result);
+  if (s_weather_send_retry_attempt < WEATHER_SEND_RETRY_COUNT) {
+    const uint32_t delay_ms =
+        send_retry_delays_ms[s_weather_send_retry_attempt];
+    s_weather_send_retry_attempt++;
+    s_weather_send_retry_timer =
+        app_timer_register(delay_ms, weather_send_retry_callback, NULL);
+    if (s_weather_send_retry_timer) {
+      return;
     }
   }
+
+  weather_request_failed();
+}
+
+static void start_weather_refresh_cycle(void) {
+  if (!s_settings.show_weather || weather_refresh_is_active()) {
+    return;
+  }
+
+  s_weather_send_retry_attempt = 0;
+  s_weather_fetch_retry_attempt = 0;
+  request_weather();
 }
 
 static void request_settings(void) {
   request_key(MESSAGE_KEY_REQUEST_SETTINGS);
+}
+
+static void weather_settings_grace_callback(void *context) {
+  s_weather_settings_grace_timer = NULL;
+  if (s_startup_weather_started) {
+    return;
+  }
+
+  s_startup_weather_started = true;
+  start_weather_refresh_cycle();
 }
 
 #if defined(PBL_HEALTH)
@@ -1213,11 +1350,13 @@ static void init(void) {
 
   update_dashboard();
   request_settings();
-  request_weather();
+  s_weather_settings_grace_timer = app_timer_register(
+      WEATHER_SETTINGS_GRACE_MS, weather_settings_grace_callback, NULL);
 }
 
 static void deinit(void) {
-  cancel_weather_request_timeout();
+  cancel_weather_settings_grace();
+  cancel_weather_refresh();
   tick_timer_service_unsubscribe();
   battery_state_service_unsubscribe();
 #if defined(PBL_HEALTH)

@@ -19,6 +19,7 @@ Signal Deck is a configurable Pebble Time 2 watchface for the 200x228 Emery disp
 - Optional demo fallback values for emulator screenshots
 - Optional weather, health, and battery percentage visibility
 - A three-hour last-known-good weather cache before unavailable placeholders appear
+- Serialized weather refreshes with bounded automatic recovery retries
 
 ## Build
 

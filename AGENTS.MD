@@ -88,9 +88,14 @@ Configuration uses `@rebble/clay` with `enableMultiJS: true` and the
 or renaming settings.
 
 Weather comes from Open-Meteo via phone-side JS and uses location permission.
-The app requests weather every 30 minutes when weather is enabled. Health demo
-fallbacks are opt-in and default to off; when enabled they keep emulator
-screenshots useful while sensors are empty.
+The watch owns weather scheduling and requests an update every 30 minutes when
+weather is enabled. Startup sends settings first, then begins one weather
+refresh; phone-side fetches and all phone-to-watch messages are serialized.
+Weather requests use a 45-second watchdog (covering the 15-second location and
+15-second HTTP limits) and retry after 1, 5, and 15 minutes before returning to
+the normal half-hour schedule. Health demo fallbacks are opt-in and default to
+off; when enabled they keep emulator screenshots useful while sensors are
+empty.
 Complete valid weather payloads are cached on the watch. Incomplete, failed, or
 timed-out refreshes retain the last valid snapshot for up to three hours,
 including across app/watch restarts. Once that cache is older than three hours,
