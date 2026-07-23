@@ -2,12 +2,15 @@
 #include <string.h>
 
 #define SETTINGS_KEY 1
+#define WEATHER_CACHE_KEY 2
 #define SETTINGS_VERSION 1
+#define WEATHER_CACHE_VERSION 1
 #define DEFAULT_STEP_GOAL 8000
 #define DEFAULT_USER_AGE 30
 #define DEFAULT_DEMO_STEPS 8600
 #define DEFAULT_DEMO_HR 72
 #define WEATHER_REQUEST_TIMEOUT_MS 20000
+#define WEATHER_CACHE_RETENTION_SECONDS (3 * 60 * 60)
 #define RING_RADIUS 28
 #define RING_STROKE 5
 
@@ -60,6 +63,17 @@ typedef struct {
 } Settings;
 
 typedef struct {
+  uint8_t version;
+  int32_t updated_at;
+  int32_t temp_c;
+  int32_t weather_code;
+  int32_t rain_percent;
+  int32_t uv_scaled;
+  int32_t sun_event_type;
+  char sun_time[6];
+} WeatherCache;
+
+typedef struct {
   const char *label;
   const char *value;
   int percent;
@@ -88,7 +102,9 @@ static int s_weather_code = -1;
 static int s_sun_event_type = -1;
 static int s_battery_percent = 0;
 static int s_temp_c = 0;
+static int s_uv_scaled = 0;
 static bool s_weather_available = false;
+static time_t s_weather_updated_at = 0;
 static AppTimer *s_weather_request_timer;
 
 static GFont s_font_time;
@@ -352,9 +368,11 @@ static int max_hr_for_gauge(void) {
 
 static void set_weather_unavailable(void) {
   s_weather_available = false;
+  s_weather_updated_at = 0;
   s_weather_code = -1;
   s_sun_event_type = -1;
   s_rain_percent = 0;
+  s_uv_scaled = 0;
   snprintf(s_temp_text, sizeof(s_temp_text), "--");
   snprintf(s_rain_text, sizeof(s_rain_text), "--");
   snprintf(s_uv_text, sizeof(s_uv_text), "--");
@@ -862,6 +880,92 @@ static bool is_valid_sun_time(const char *value) {
   return hour <= 23 && minute <= 59;
 }
 
+static bool is_valid_weather_snapshot(int temp, int weather_code, int rain,
+                                      int uv_scaled, int sun_type,
+                                      const char *sun_time) {
+  return temp >= -100 && temp <= 100 && weather_code >= 0 && weather_code <= 99 &&
+      rain >= 0 && rain <= 100 && uv_scaled >= 0 && uv_scaled <= 999 &&
+      (sun_type == 0 || sun_type == 1) && is_valid_sun_time(sun_time);
+}
+
+static bool weather_cache_is_fresh(time_t now) {
+  return s_weather_available && s_weather_updated_at > 0 &&
+      now >= s_weather_updated_at &&
+      now - s_weather_updated_at <= WEATHER_CACHE_RETENTION_SECONDS;
+}
+
+static void clear_weather_cache(void) {
+  set_weather_unavailable();
+  if (persist_exists(WEATHER_CACHE_KEY)) {
+    persist_delete(WEATHER_CACHE_KEY);
+  }
+}
+
+static void save_weather_cache(void) {
+  WeatherCache cache;
+  memset(&cache, 0, sizeof(cache));
+  cache.version = WEATHER_CACHE_VERSION;
+  cache.updated_at = (int32_t)s_weather_updated_at;
+  cache.temp_c = s_temp_c;
+  cache.weather_code = s_weather_code;
+  cache.rain_percent = s_rain_percent;
+  cache.uv_scaled = s_uv_scaled;
+  cache.sun_event_type = s_sun_event_type;
+  memcpy(cache.sun_time, s_sun_text, sizeof(cache.sun_time));
+  cache.sun_time[sizeof(cache.sun_time) - 1] = '\0';
+  persist_write_data(WEATHER_CACHE_KEY, &cache, sizeof(cache));
+}
+
+static void apply_weather_snapshot(int temp, int weather_code, int rain,
+                                   int uv_scaled, int sun_type,
+                                   const char *sun_time, time_t updated_at) {
+  s_weather_available = true;
+  s_weather_updated_at = updated_at;
+  s_temp_c = temp;
+  s_weather_code = weather_code;
+  s_rain_percent = rain;
+  s_uv_scaled = uv_scaled;
+  s_sun_event_type = sun_type;
+  format_temp_text();
+  snprintf(s_rain_text, sizeof(s_rain_text), "%d%%", rain);
+  const unsigned int safe_uv_scaled =
+      (unsigned int)(uv_scaled < 0 ? 0 : (uv_scaled > 999 ? 999 : uv_scaled));
+  snprintf(s_uv_text, sizeof(s_uv_text), "%u.%u", safe_uv_scaled / 10,
+           safe_uv_scaled % 10);
+  snprintf(s_sun_text, sizeof(s_sun_text), "%s", sun_time);
+}
+
+static void load_weather_cache(void) {
+  WeatherCache loaded;
+  time_t now = time(NULL);
+  if (persist_read_data(WEATHER_CACHE_KEY, &loaded, sizeof(loaded)) ==
+          (int)sizeof(loaded) &&
+      loaded.version == WEATHER_CACHE_VERSION &&
+      loaded.sun_time[sizeof(loaded.sun_time) - 1] == '\0' &&
+      is_valid_weather_snapshot(loaded.temp_c, loaded.weather_code,
+                                loaded.rain_percent, loaded.uv_scaled,
+                                loaded.sun_event_type, loaded.sun_time) &&
+      loaded.updated_at > 0 && now >= (time_t)loaded.updated_at &&
+      now - (time_t)loaded.updated_at <= WEATHER_CACHE_RETENTION_SECONDS) {
+    apply_weather_snapshot(loaded.temp_c, loaded.weather_code, loaded.rain_percent,
+                           loaded.uv_scaled, loaded.sun_event_type, loaded.sun_time,
+                           (time_t)loaded.updated_at);
+    return;
+  }
+
+  clear_weather_cache();
+}
+
+static void handle_weather_failure(void) {
+  if (weather_cache_is_fresh(time(NULL))) {
+    APP_LOG(APP_LOG_LEVEL_INFO, "Keeping cached weather after refresh failure");
+    return;
+  }
+
+  APP_LOG(APP_LOG_LEVEL_INFO, "Weather cache unavailable or older than three hours");
+  clear_weather_cache();
+}
+
 static void cancel_weather_request_timeout(void) {
   if (s_weather_request_timer) {
     app_timer_cancel(s_weather_request_timer);
@@ -871,7 +975,7 @@ static void cancel_weather_request_timeout(void) {
 
 static void weather_request_timeout_callback(void *context) {
   s_weather_request_timer = NULL;
-  set_weather_unavailable();
+  handle_weather_failure();
   mark_canvas_dirty();
 }
 
@@ -898,23 +1002,16 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
     const char *sun_time = sun_time_tuple ? sun_time_tuple->value->cstring : NULL;
 
     const bool complete_weather = temp_tuple && weather_code_tuple && rain_tuple &&
-        uv_tuple && sun_time_tuple && sun_type_tuple && temp >= -100 && temp <= 100 &&
-        weather_code >= 0 && weather_code <= 99 && rain >= 0 && rain <= 100 &&
-        uv_scaled >= 0 && uv_scaled <= 999 && (sun_type == 0 || sun_type == 1) &&
-        is_valid_sun_time(sun_time);
+        uv_tuple && sun_time_tuple && sun_type_tuple &&
+        is_valid_weather_snapshot(temp, weather_code, rain, uv_scaled, sun_type,
+                                  sun_time);
 
     if (complete_weather) {
-      s_weather_available = true;
-      s_temp_c = temp;
-      s_weather_code = weather_code;
-      s_rain_percent = rain;
-      s_sun_event_type = sun_type;
-      format_temp_text();
-      snprintf(s_rain_text, sizeof(s_rain_text), "%d%%", rain);
-      snprintf(s_uv_text, sizeof(s_uv_text), "%d.%d", uv_scaled / 10, uv_scaled % 10);
-      snprintf(s_sun_text, sizeof(s_sun_text), "%s", sun_time);
+      apply_weather_snapshot(temp, weather_code, rain, uv_scaled, sun_type, sun_time,
+                             time(NULL));
+      save_weather_cache();
     } else {
-      set_weather_unavailable();
+      handle_weather_failure();
     }
   }
 
@@ -986,7 +1083,6 @@ static void inbox_received_callback(DictionaryIterator *iterator, void *context)
     window_set_background_color(s_main_window, color_bg());
     if (!s_settings.show_weather) {
       cancel_weather_request_timeout();
-      set_weather_unavailable();
     }
     update_dashboard();
     if (s_settings.show_weather) {
@@ -1007,7 +1103,7 @@ static void outbox_failed_callback(DictionaryIterator *iterator, AppMessageResul
   APP_LOG(APP_LOG_LEVEL_ERROR, "Outbox failed: %d", reason);
   if (iterator && dict_find(iterator, MESSAGE_KEY_REQUEST_WEATHER)) {
     cancel_weather_request_timeout();
-    set_weather_unavailable();
+    handle_weather_failure();
     mark_canvas_dirty();
   }
 }
@@ -1029,7 +1125,7 @@ static void request_weather(void) {
       s_weather_request_timer = app_timer_register(
           WEATHER_REQUEST_TIMEOUT_MS, weather_request_timeout_callback, NULL);
     } else {
-      set_weather_unavailable();
+      handle_weather_failure();
       mark_canvas_dirty();
     }
   }
@@ -1093,6 +1189,7 @@ static void main_window_unload(Window *window) {
 
 static void init(void) {
   load_settings();
+  load_weather_cache();
 
   s_main_window = window_create();
   window_set_background_color(s_main_window, color_bg());

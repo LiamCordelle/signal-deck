@@ -91,10 +91,12 @@ Weather comes from Open-Meteo via phone-side JS and uses location permission.
 The app requests weather every 30 minutes when weather is enabled. Health demo
 fallbacks are opt-in and default to off; when enabled they keep emulator
 screenshots useful while sensors are empty.
-Unavailable, incomplete, or timed-out weather must clear all weather fields
-atomically: temperature/rain/UV use `--`, sun uses `--:--` internally, the rain
-gauge has no progress arc, and weather/sun icons are hidden. A complete valid
-weather payload restores the snapshot atomically.
+Complete valid weather payloads are cached on the watch. Incomplete, failed, or
+timed-out refreshes retain the last valid snapshot for up to three hours,
+including across app/watch restarts. Once that cache is older than three hours,
+all weather fields clear atomically: temperature/rain/UV use `--`, sun uses
+`--:--` internally, the rain gauge has no progress arc, and weather/sun icons
+are hidden.
 
 The tick timer should stay on `MINUTE_UNIT` unless seconds are explicitly added.
 
